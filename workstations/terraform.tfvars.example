@@ -1,0 +1,21 @@
+# Cloud Workstations 設定
+# このファイルを terraform.tfvars にコピーして値を設定してください
+
+# 必須設定
+project_id   = "your-project-id"
+network_name = "your-vpc-network"
+subnet_name  = "your-subnet"
+
+# オプション設定 (デフォルト値あり)
+region           = "asia-northeast1"
+cluster_name     = "workstation-cluster"
+config_name      = "workstation-config"
+workstation_name = "dev-workstation"
+
+# マシンスペック
+machine_type      = "e2-standard-4"  # 4 vCPU, 16GB RAM
+boot_disk_size_gb = 35
+
+# タイムアウト設定
+idle_timeout    = "1800s"   # 30分でアイドル停止
+running_timeout = "43200s"  # 12時間で強制停止
