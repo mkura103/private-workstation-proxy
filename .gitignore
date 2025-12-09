@@ -1,0 +1,29 @@
+# Terraform
+*.tfvars
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Environment files
+.env
+.env.*
+
+# Secrets
+*secret*
+*credential*
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Playwright
+.playwright-mcp/

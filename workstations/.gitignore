@@ -1,0 +1,13 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+
+# 変数ファイル (機密情報を含む可能性)
+terraform.tfvars
+*.auto.tfvars
+
+# macOS
+.DS_Store
