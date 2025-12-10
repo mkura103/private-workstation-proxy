@@ -128,9 +128,11 @@ resource "google_cloud_run_v2_service_iam_member" "iap_users" {
 }
 
 # Enable IAP on Cloud Run (via gcloud - not natively supported in Terraform)
+# Triggers on every service update to ensure IAP stays enabled
 resource "null_resource" "enable_iap" {
   triggers = {
-    service_name = google_cloud_run_v2_service.proxy.name
+    service_name     = google_cloud_run_v2_service.proxy.name
+    service_revision = google_cloud_run_v2_service.proxy.latest_ready_revision
   }
 
   provisioner "local-exec" {
