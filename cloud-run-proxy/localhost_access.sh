@@ -4,17 +4,27 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TFVARS_FILE="${SCRIPT_DIR}/terraform.tfvars"
+
+# terraform.tfvars から値を取得する関数
+get_tfvar() {
+    local key=$1
+    grep "^${key}" "${TFVARS_FILE}" | sed 's/.*=\s*"\([^"]*\)".*/\1/' | head -1
+}
+
 # 設定読み込み
-if [ -f .env ]; then
-    source .env
-else
-    echo "Error: .env ファイルが見つかりません"
+if [ ! -f "${TFVARS_FILE}" ]; then
+    echo "Error: terraform.tfvars が見つかりません"
     exit 1
 fi
 
-# 必須変数チェック
-: "${REGION:?REGION が設定されていません}"
-: "${SERVICE_NAME:?SERVICE_NAME が設定されていません}"
+REGION=$(get_tfvar "region")
+SERVICE_NAME=$(get_tfvar "service_name")
+
+# デフォルト値
+REGION="${REGION:-asia-northeast1}"
+SERVICE_NAME="${SERVICE_NAME:-workstation-proxy}"
 
 echo "=== Cloud Run Proxy 起動 ==="
 echo "Service: ${SERVICE_NAME}"
