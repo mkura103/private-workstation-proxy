@@ -463,6 +463,14 @@ async def auth_middleware(request, handler):
     """認証ミドルウェア"""
     # IAPモードなら認証スキップ（IAP or gcloud proxyで認証済み前提）
     if AUTH_MODE == 'iap':
+        # セッションがなければ作成（静的リソースルーティング用）
+        session_id = request.cookies.get('session')
+        if not session_id or session_id not in _sessions:
+            session_id = secrets.token_urlsafe(32)
+            _sessions[session_id] = {"expires": time.time() + SESSION_DURATION}
+            response = await handler(request)
+            response.set_cookie('session', session_id, httponly=True, max_age=SESSION_DURATION)
+            return response
         return await handler(request)
 
     # 認証不要なパス
