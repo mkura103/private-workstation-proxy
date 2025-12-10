@@ -116,7 +116,7 @@ resource "google_cloud_run_v2_service" "proxy" {
   depends_on = [null_resource.build_and_push]
 }
 
-# IAM: Grant specific users access (IAP mode)
+# IAM: Grant specific users access (Cloud Run invoker)
 resource "google_cloud_run_v2_service_iam_member" "iap_users" {
   for_each = toset(var.iap_users)
 
@@ -125,4 +125,46 @@ resource "google_cloud_run_v2_service_iam_member" "iap_users" {
   name     = google_cloud_run_v2_service.proxy.name
   role     = "roles/run.invoker"
   member   = each.value
+}
+
+# Enable IAP on Cloud Run (via gcloud - not natively supported in Terraform)
+resource "null_resource" "enable_iap" {
+  triggers = {
+    service_name = google_cloud_run_v2_service.proxy.name
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      gcloud beta run services update ${var.service_name} \
+        --region=${var.region} \
+        --project=${var.project_id} \
+        --iap
+    EOT
+  }
+
+  depends_on = [google_cloud_run_v2_service.proxy]
+}
+
+# Grant IAP access to users (via gcloud)
+resource "null_resource" "iap_access" {
+  for_each = toset(var.iap_users)
+
+  triggers = {
+    service_name = google_cloud_run_v2_service.proxy.name
+    member       = each.value
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      gcloud beta iap web add-iam-policy-binding \
+        --region=${var.region} \
+        --resource-type=cloud-run \
+        --service=${var.service_name} \
+        --project=${var.project_id} \
+        --member="${each.value}" \
+        --role="roles/iap.httpsResourceAccessor"
+    EOT
+  }
+
+  depends_on = [null_resource.enable_iap]
 }
