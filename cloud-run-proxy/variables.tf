@@ -32,21 +32,8 @@ variable "cluster_hostname" {
   type        = string
 }
 
-variable "auth_mode" {
-  description = "Authentication mode: 'password' or 'iap'"
-  type        = string
-  default     = "password"
-}
-
-variable "proxy_password" {
-  description = "Password for proxy authentication (required when auth_mode is 'password')"
-  type        = string
-  sensitive   = true
-  default     = "changeme"
-}
-
 variable "iap_users" {
-  description = "List of users/groups to grant Cloud Run invoker role (required when auth_mode is 'iap'). Format: 'user:email@example.com' or 'group:group@example.com'"
+  description = "List of users/groups to grant Cloud Run invoker role. Format: 'user:email@example.com' or 'group:group@example.com'"
   type        = list(string)
   default     = []
 }

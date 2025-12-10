@@ -8,6 +8,10 @@ project_id = "your-project-id"
 # Get this from workstations terraform output: cluster_hostname
 cluster_hostname = "cluster-xxx.cloudworkstations.dev"
 
+# Required: IAP users (users/groups to grant access)
+# Format: "user:email@example.com" or "group:group@example.com"
+iap_users = ["user:your-email@example.com"]
+
 # Optional: Region (default: asia-northeast1)
 # region = "asia-northeast1"
 
@@ -19,11 +23,3 @@ cluster_hostname = "cluster-xxx.cloudworkstations.dev"
 
 # Optional: Subnet name (default: default)
 # subnet = "default"
-
-# Optional: Authentication mode (default: password)
-# "password" - Simple password authentication (for non-organization projects)
-# "iap" - IAP authentication (for organization projects)
-# auth_mode = "password"
-
-# Optional: Proxy password (required when auth_mode is "password")
-# proxy_password = "your-secure-password"

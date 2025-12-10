@@ -89,19 +89,6 @@ resource "google_cloud_run_v2_service" "proxy" {
         value = var.cluster_hostname
       }
 
-      env {
-        name  = "AUTH_MODE"
-        value = var.auth_mode
-      }
-
-      dynamic "env" {
-        for_each = var.auth_mode == "password" ? [1] : []
-        content {
-          name  = "PROXY_PASSWORD"
-          value = var.proxy_password
-        }
-      }
-
       resources {
         limits = {
           cpu    = "1"
@@ -129,20 +116,9 @@ resource "google_cloud_run_v2_service" "proxy" {
   depends_on = [null_resource.build_and_push]
 }
 
-# IAM: Allow public access when auth_mode is password
-resource "google_cloud_run_v2_service_iam_member" "public_access" {
-  count = var.auth_mode == "password" ? 1 : 0
-
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.proxy.name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
-
-# IAM: Grant specific users access when auth_mode is iap
+# IAM: Grant specific users access (IAP mode)
 resource "google_cloud_run_v2_service_iam_member" "iap_users" {
-  for_each = var.auth_mode == "iap" ? toset(var.iap_users) : toset([])
+  for_each = toset(var.iap_users)
 
   project  = var.project_id
   location = var.region
