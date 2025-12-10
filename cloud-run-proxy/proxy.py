@@ -4,6 +4,7 @@ Cloud Run Proxy Server for Private Cloud Workstations
 - Workstation APIからアクセストークンを取得
 - Workstationに認証付きでリクエストをプロキシ
 - WebSocket対応
+- IAP認証前提
 """
 
 import os
@@ -20,13 +21,11 @@ sys.stdout.reconfigure(line_buffering=True)
 
 # 環境変数
 CLUSTER_HOSTNAME = os.environ.get('CLUSTER_HOSTNAME', 'cluster-xxx.cloudworkstations.dev')
-PROJECT_ID = os.environ.get('PROJECT_ID', 'kura-project-1')
+PROJECT_ID = os.environ.get('PROJECT_ID', 'my-gcp-project')
 REGION = os.environ.get('REGION', 'asia-northeast1')
 CLUSTER_NAME = os.environ.get('CLUSTER_NAME', 'workstation-cluster')
 CONFIG_NAME = os.environ.get('CONFIG_NAME', 'workstation-config')
 PORT = int(os.environ.get('PORT', '8080'))
-AUTH_MODE = os.environ.get('AUTH_MODE', 'password')  # 'password' or 'iap'
-PROXY_PASSWORD = os.environ.get('PROXY_PASSWORD', 'changeme')
 
 # メタデータサーバーURL
 METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
@@ -35,7 +34,7 @@ METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instanc
 _gcp_token_cache = {"token": None, "expires": 0}
 _ws_token_cache = {}  # {workstation_name: {"token": ..., "expires": ...}}
 
-# セッション管理
+# セッション管理（静的リソースルーティング用）
 _sessions = {}  # {session_id: {"expires": timestamp, "last_workstation": str}}
 SESSION_DURATION = 86400  # 24時間
 
@@ -60,6 +59,7 @@ STATUS_HTML = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="15">
     <title>Workstation Status</title>
     <style>
         body {{ font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }}
@@ -103,36 +103,6 @@ STATUS_HTML = """<!DOCTYPE html>
         {message}
         {button}
         {open_link}
-    </div>
-</body>
-</html>
-"""
-
-# ログインページHTML（CSSの {} は {{}} にエスケープ）
-LOGIN_HTML = """<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Workstation Proxy Login</title>
-    <style>
-        body {{ font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }}
-        .login-box {{ background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
-        h1 {{ margin-top: 0; font-size: 1.5rem; }}
-        input {{ display: block; width: 100%; padding: 0.5rem; margin: 0.5rem 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }}
-        button {{ width: 100%; padding: 0.5rem; background: #4285f4; color: white; border: none; border-radius: 4px; cursor: pointer; }}
-        button:hover {{ background: #3367d6; }}
-        .error {{ color: red; font-size: 0.9rem; }}
-    </style>
-</head>
-<body>
-    <div class="login-box">
-        <h1>Workstation Proxy</h1>
-        {error}
-        <form method="POST" action="/login">
-            <input name="password" type="password" placeholder="Password" required autofocus>
-            <button type="submit">Login</button>
-        </form>
     </div>
 </body>
 </html>
@@ -281,6 +251,10 @@ async def start_workstation(workstation_name: str) -> dict:
             if resp.status == 200:
                 log(f"Workstation '{workstation_name}' start initiated")
                 return {"success": True}
+            elif resp.status == 409:
+                # 既に開始処理中 - 成功扱い
+                log(f"Workstation '{workstation_name}' already starting (409)")
+                return {"success": True}
             else:
                 error = await resp.text()
                 log(f"Failed to start workstation '{workstation_name}': {resp.status} - {error}")
@@ -307,6 +281,10 @@ async def stop_workstation(workstation_name: str) -> dict:
             if resp.status == 200:
                 log(f"Workstation '{workstation_name}' stop initiated")
                 return {"success": True}
+            elif resp.status == 409:
+                # 既に停止処理中 - 成功扱い
+                log(f"Workstation '{workstation_name}' already stopping (409)")
+                return {"success": True}
             else:
                 error = await resp.text()
                 log(f"Failed to stop workstation '{workstation_name}': {resp.status} - {error}")
@@ -321,22 +299,35 @@ async def handle_status(request):
 
     message = ""
     error_msg = ""
+    action_performed = None  # 実行したアクションを記録
 
     # POST: 開始/停止アクション
     if request.method == 'POST':
+        # まず現在の状態を取得
+        current_status = await get_workstation_status(ws_name)
+        current_state = current_status.get('state', 'UNKNOWN')
+
         data = await request.post()
         action = data.get('action')
 
-        if action == 'start':
+        # 遷移中（STARTING/STOPPING）の場合はアクションを無視
+        if current_state in ['STATE_STARTING', 'STATE_STOPPING']:
+            log(f"Ignoring action '{action}' - workstation is in transitional state: {current_state}")
+        # 状態と矛盾するアクションは無視（例: RUNNING中にstart）
+        elif action == 'start' and current_state == 'STATE_RUNNING':
+            log(f"Ignoring start action - workstation is already running")
+        elif action == 'stop' and current_state == 'STATE_STOPPED':
+            log(f"Ignoring stop action - workstation is already stopped")
+        elif action == 'start' and current_state == 'STATE_STOPPED':
             result = await start_workstation(ws_name)
             if result.get('success'):
-                message = '<div class="message">Starting workstation... (refresh in a few seconds)</div>'
+                action_performed = 'start'
             else:
                 error_msg = f'<div class="error">Failed to start: {result.get("error", "Unknown error")}</div>'
-        elif action == 'stop':
+        elif action == 'stop' and current_state == 'STATE_RUNNING':
             result = await stop_workstation(ws_name)
             if result.get('success'):
-                message = '<div class="message">Stopping workstation... (refresh in a few seconds)</div>'
+                action_performed = 'stop'
             else:
                 error_msg = f'<div class="error">Failed to stop: {result.get("error", "Unknown error")}</div>'
 
@@ -344,6 +335,13 @@ async def handle_status(request):
     status = await get_workstation_status(ws_name)
 
     state = status.get('state', 'UNKNOWN')
+
+    # アクション実行後、状態に応じてメッセージを表示
+    # 既に目標状態に達している場合はメッセージを表示しない
+    if action_performed == 'start' and state != 'STATE_RUNNING':
+        message = '<div class="message">Starting workstation...</div>'
+    elif action_performed == 'stop' and state != 'STATE_STOPPED':
+        message = '<div class="message">Stopping workstation...</div>'
 
     # 状態に応じたCSSクラス
     if state == 'STATE_RUNNING':
@@ -399,90 +397,17 @@ async def health_check(request):
     return web.Response(text="OK")
 
 
-async def login_page(request):
-    """ログインページを表示"""
-    error_msg = ""
-    if request.query.get('error'):
-        error_msg = '<p class="error">Invalid password</p>'
-    html = LOGIN_HTML.format(error=error_msg)
-    return web.Response(text=html, content_type='text/html')
-
-
-async def handle_login(request):
-    """ログイン処理"""
-    data = await request.post()
-    password = data.get('password', '')
-
-    if password == PROXY_PASSWORD:
+@web.middleware
+async def session_middleware(request, handler):
+    """セッション管理ミドルウェア（静的リソースルーティング用）"""
+    # セッションがなければ作成
+    session_id = request.cookies.get('session')
+    if not session_id or session_id not in _sessions:
         session_id = secrets.token_urlsafe(32)
         _sessions[session_id] = {"expires": time.time() + SESSION_DURATION}
-        log(f"Login successful, session created")
-
-        # ログイン後のリダイレクト先
-        redirect_to = request.query.get('next', '/')
-        response = web.HTTPFound(redirect_to)
+        response = await handler(request)
         response.set_cookie('session', session_id, httponly=True, max_age=SESSION_DURATION)
         return response
-
-    log(f"Login failed: invalid password")
-    return web.HTTPFound('/login?error=1')
-
-
-async def handle_logout(request):
-    """ログアウト処理"""
-    session_id = request.cookies.get('session')
-    if session_id and session_id in _sessions:
-        del _sessions[session_id]
-        log(f"Session logged out")
-
-    response = web.HTTPFound('/login')
-    response.del_cookie('session')
-    return response
-
-
-def is_authenticated(request) -> bool:
-    """セッションが有効かチェック"""
-    session_id = request.cookies.get('session')
-    if not session_id:
-        return False
-
-    session = _sessions.get(session_id)
-    if not session:
-        return False
-
-    if time.time() > session.get('expires', 0):
-        # 期限切れセッションを削除
-        del _sessions[session_id]
-        return False
-
-    return True
-
-
-@web.middleware
-async def auth_middleware(request, handler):
-    """認証ミドルウェア"""
-    # IAPモードなら認証スキップ（IAP or gcloud proxyで認証済み前提）
-    if AUTH_MODE == 'iap':
-        # セッションがなければ作成（静的リソースルーティング用）
-        session_id = request.cookies.get('session')
-        if not session_id or session_id not in _sessions:
-            session_id = secrets.token_urlsafe(32)
-            _sessions[session_id] = {"expires": time.time() + SESSION_DURATION}
-            response = await handler(request)
-            response.set_cookie('session', session_id, httponly=True, max_age=SESSION_DURATION)
-            return response
-        return await handler(request)
-
-    # 認証不要なパス
-    if request.path in ['/health', '/login'] or request.path.startswith('/status/'):
-        return await handler(request)
-
-    # 認証チェック
-    if not is_authenticated(request):
-        # ログインページにリダイレクト（元のパスを保存）
-        redirect_url = f'/login?next={request.path}'
-        return web.HTTPFound(redirect_url)
-
     return await handler(request)
 
 
@@ -705,12 +630,9 @@ async def handle_request(request):
 
 
 def create_app():
-    app = web.Application(middlewares=[auth_middleware])
+    app = web.Application(middlewares=[session_middleware])
     app.router.add_route('GET', '/health', health_check)
     app.router.add_route('*', '/status/{name}', handle_status)
-    app.router.add_route('GET', '/login', login_page)
-    app.router.add_route('POST', '/login', handle_login)
-    app.router.add_route('GET', '/logout', handle_logout)
     app.router.add_route('*', '/{path:.*}', handle_request)
     return app
 
@@ -720,10 +642,7 @@ if __name__ == '__main__':
     log(f"Cluster hostname: {CLUSTER_HOSTNAME}")
     log(f"Project: {PROJECT_ID}, Region: {REGION}")
     log(f"Cluster: {CLUSTER_NAME}, Config: {CONFIG_NAME}")
-    if AUTH_MODE == 'iap':
-        log(f"Authentication: IAP mode (no password)")
-    else:
-        log(f"Authentication: password mode")
+    log(f"Authentication: IAP (Identity-Aware Proxy)")
     log("Usage: /ws/{workstation_name}/...")
     app = create_app()
     web.run_app(app, host='0.0.0.0', port=PORT)
