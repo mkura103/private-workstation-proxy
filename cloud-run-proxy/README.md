@@ -4,12 +4,21 @@ Private Cloud WorkstationsへアクセスするためのPython (aiohttp) リバ�
 
 ## 構成
 
-```
-[インターネット]
-    ↓ HTTPS
-[Cloud Run (Python aiohttp)] ← IAP認証 (Googleログイン)
-    ↓ Direct VPC Egress
-[Private Workstations]
+```mermaid
+flowchart TB
+    subgraph Internet
+        User[ユーザー<br/>ブラウザ]
+    end
+
+    subgraph "Google Cloud"
+        IAP[IAP認証<br/>Googleログイン]
+        CloudRun[Cloud Run<br/>Python aiohttp]
+        Workstation[Private Workstations]
+    end
+
+    User -->|HTTPS| IAP
+    IAP --> CloudRun
+    CloudRun -->|Direct VPC Egress| Workstation
 ```
 
 ## ファイル構成
@@ -112,12 +121,26 @@ POST /v1/.../workstations/{name}:stop  # 停止
 
 ## 認証フロー
 
-```
-1. ユーザー → Cloud Run URL にアクセス
-2. IAP → Googleログイン認証 (自動)
-3. Cloud Run → メタデータサーバー → GCPアクセストークン取得
-4. Cloud Run → Workstation API (generateAccessToken) → Workstationトークン取得
-5. Cloud Run → Workstation (Authorization: Bearer TOKEN)
+```mermaid
+sequenceDiagram
+    participant User as ユーザー
+    participant IAP as IAP
+    participant CloudRun as Cloud Run
+    participant Metadata as メタデータサーバー
+    participant API as Workstation API
+    participant WS as Workstation
+
+    User->>IAP: Cloud Run URLにアクセス
+    IAP->>User: Googleログイン認証
+    User->>IAP: 認証完了
+    IAP->>CloudRun: 認証済みリクエスト
+    CloudRun->>Metadata: GCPアクセストークン取得
+    Metadata-->>CloudRun: GCPトークン
+    CloudRun->>API: generateAccessToken
+    API-->>CloudRun: Workstationトークン
+    CloudRun->>WS: Authorization: Bearer TOKEN
+    WS-->>CloudRun: レスポンス
+    CloudRun-->>User: レスポンス
 ```
 
 ## 技術仕様

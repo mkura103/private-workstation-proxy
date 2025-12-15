@@ -1,17 +1,29 @@
-# Cloud Workstations Private Access via Cloud Run Proxy
+# Accessing Private Cloud Workstations via Cloud Run Proxy
 
 Private設定のCloud Workstationsに、Cloud Runをプロキシサーバーとして経由してアクセスするための構成。
 
 ## アーキテクチャ
 
-```
-[ユーザーPC (ブラウザ)]
-    ↓ HTTPS (IAP認証 / Googleログイン)
-[Cloud Run Proxy (Python aiohttp)] ← IAP (Identity-Aware Proxy)
-    ↓ Direct VPC Egress
-[Private VPC (default)]
-    ↓ PSC (Private Service Connect)
-[Cloud Workstations (Private Endpoint)]
+```mermaid
+flowchart TB
+    subgraph Internet
+        User[ユーザーPC<br/>ブラウザ]
+    end
+
+    subgraph "Google Cloud"
+        IAP[IAP<br/>Identity-Aware Proxy]
+        CloudRun[Cloud Run Proxy<br/>Python aiohttp]
+
+        subgraph "Private VPC"
+            PSC[PSC Endpoint]
+            Workstation[Cloud Workstations<br/>Private Endpoint]
+        end
+    end
+
+    User -->|HTTPS + Googleログイン| IAP
+    IAP -->|認証済みリクエスト| CloudRun
+    CloudRun -->|Direct VPC Egress| PSC
+    PSC --> Workstation
 ```
 
 ## フォルダ構成
