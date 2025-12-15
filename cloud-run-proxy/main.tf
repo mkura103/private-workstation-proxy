@@ -109,7 +109,7 @@ resource "google_cloud_run_v2_service" "proxy" {
         network    = data.google_compute_network.main.id
         subnetwork = data.google_compute_subnetwork.main.id
       }
-      egress = "ALL_TRAFFIC"
+      egress = "PRIVATE_RANGES_ONLY"
     }
   }
 
